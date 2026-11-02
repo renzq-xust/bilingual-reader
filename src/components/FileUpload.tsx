@@ -3,16 +3,15 @@ import { useDropzone } from 'react-dropzone';
 import { Upload, FileText, AlertCircle, Loader2, X } from 'lucide-react';
 import { useAppStore } from '../store';
 import { parseDocument } from '../services/parser';
-import { createDeepSeekService } from '../services/deepseek';
 import { Document } from '../types';
 
 export function FileUpload() {
-  const { setDocument, setIsLoading, setError, translationConfig, isLoading, error } = useAppStore();
+  const { setDocument, setIsLoading, setError, isLoading, error } = useAppStore();
   const [dragActive, setDragActive] = useState(false);
   const [progress, setProgress] = useState('');
 
   const handleFile = useCallback(async (file: File) => {
-    console.log('开始处理文件:', file.name, '类型:', file.type, '大小:', file.size);
+    console.log('[FileUpload] 开始处理文件:', file.name, '类型:', file.type, '大小:', file.size);
     setIsLoading(true);
     setError(null);
     setProgress('正在读取文件...');
@@ -20,12 +19,10 @@ export function FileUpload() {
     try {
       // 解析文档
       setProgress('正在解析文档...');
-      console.log('开始解析文档...');
       const result = await parseDocument(file);
       const { paragraphs, pdfPages } = result;
-      console.log('文档解析完成，段落数:', paragraphs.length, 'PDF页数:', pdfPages?.length);
+      console.log('[FileUpload] 文档解析完成，段落数:', paragraphs.length, 'PDF页数:', pdfPages?.length);
       
-      // 使用视觉翻译，不需要提取文本
       setProgress(`解析完成，共 ${pdfPages?.length || 0} 页`);
       
       // 创建文档对象
@@ -34,24 +31,24 @@ export function FileUpload() {
         title: file.name,
         type: file.name.endsWith('.pdf') ? 'pdf' : 'epub',
         paragraphs,
-        pdfPages: pdfPages,  // PDF页面信息
-        pdfFile: file.name.endsWith('.pdf') ? file : undefined,  // PDF文件对象
+        pdfPages,
+        pdfFile: file.name.endsWith('.pdf') ? file : undefined,
         totalPages: pdfPages ? pdfPages.length : Math.ceil(paragraphs.length / 10),
         currentPage: 0,
       };
 
-      console.log('文档对象创建成功:', doc.title);
+      console.log('[FileUpload] 文档对象创建成功:', doc.title);
       setDocument(doc);
       setProgress('');
     } catch (err) {
-      console.error('文件处理错误:', err);
+      console.error('[FileUpload] 文件处理错误:', err);
       const errorMessage = err instanceof Error ? err.message : '文件处理失败';
       setError(errorMessage);
       setProgress('');
     } finally {
       setIsLoading(false);
     }
-  }, [setDocument, setIsLoading, setError, translationConfig]);
+  }, [setDocument, setIsLoading, setError]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {

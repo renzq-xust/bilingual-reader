@@ -1,9 +1,5 @@
-import * as pdfjsLib from 'pdfjs-dist';
-import { Paragraph, PDFPageInfo, Sentence } from '../types';
-
-// 配置 PDF.js worker - 使用 pdfjs-dist 自带的 worker
-import PdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
-pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
+import { getPDFLib } from '../utils/pdfWorker';
+import { Paragraph, PDFPageInfo } from '../types';
 
 // 将文本按句子分割
 export function splitIntoSentences(text: string): string[] {
@@ -29,7 +25,21 @@ export function splitIntoSentences(text: string): string[] {
   return sentences;
 }
 
-// 解析 PDF 文件 - 返回页面信息（用于方案A：直接渲染PDF）
+/**
+ * 安全读取 File 的 ArrayBuffer
+ * File.arrayBuffer() 内部使用的 stream 只能消费一次，
+ * 因此调用方应缓存结果并复用
+ */
+async function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  try {
+    return await file.arrayBuffer();
+  } catch (error) {
+    console.error('[Parser] 文件读取失败:', error);
+    throw new Error('文件读取失败，请重新选择文件');
+  }
+}
+
+// 解析 PDF 文件 - 返回页面信息
 export async function parsePDF(file: File): Promise<{
   paragraphs: Paragraph[];
   pdfPages: PDFPageInfo[];
@@ -37,34 +47,35 @@ export async function parsePDF(file: File): Promise<{
   const paragraphs: Paragraph[] = [];
   const pdfPages: PDFPageInfo[] = [];
   
-  console.log('开始解析 PDF 文件:', file.name);
+  console.log('[Parser] 开始解析 PDF 文件:', file.name);
   
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    console.log('文件读取完成，大小:', arrayBuffer.byteLength, 'bytes');
+    // 每次读取新的 ArrayBuffer（File.arrayBuffer() 每次调用会创建新副本）
+    const arrayBuffer = await readFileAsArrayBuffer(file);
+    console.log('[Parser] 文件读取完成，大小:', arrayBuffer.byteLength, 'bytes');
     
+    const pdfjsLib = getPDFLib();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     const numPages = pdf.numPages;
-    console.log('PDF 加载成功，总页数:', numPages);
+    console.log('[Parser] PDF 加载成功，总页数:', numPages);
 
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale: 1 });
       
-      // 只保存页面基本信息，不提取文本（使用视觉模型翻译）
       pdfPages.push({
         pageNumber: pageNum,
         width: viewport.width,
         height: viewport.height,
         textContent: '',
-        sentences: [],  // 空句子列表，翻译时由视觉模型填充
+        sentences: [],
       });
     }
 
-    console.log('PDF 解析完成，总页数:', pdfPages.length);
+    console.log('[Parser] PDF 解析完成，总页数:', pdfPages.length);
     return { paragraphs, pdfPages };
   } catch (error) {
-    console.error('PDF解析错误:', error);
+    console.error('[Parser] PDF 解析错误:', error);
     const errorMessage = error instanceof Error ? error.message : '未知错误';
     throw new Error(`无法解析PDF文件: ${errorMessage}`);
   }
@@ -77,14 +88,13 @@ export async function parseEPUB(file: File): Promise<Paragraph[]> {
   try {
     // 动态导入 epubjs
     const ePub = (await import('epubjs')).default;
-    const book = ePub(file as any);
+    const book = ePub(file as unknown as Parameters<typeof ePub>[0]);
     
     await book.ready;
-    const spine = book.spine as any;
+    const spine = book.spine as unknown as { items: Array<{ load: (loader: unknown) => Promise<string | Document> }> };
     
     for (let i = 0; i < spine.items.length; i++) {
-      const item = spine.items[i];
-      const contents = await item.load(book.load.bind(book));
+      const contents = await spine.items[i].load(book.load.bind(book));
       
       if (typeof contents === 'string') {
         // 解析 HTML 内容
@@ -116,8 +126,9 @@ export async function parseEPUB(file: File): Promise<Paragraph[]> {
     book.destroy();
     return paragraphs;
   } catch (error) {
-    console.error('EPUB解析错误:', error);
-    throw new Error('无法解析EPUB文件');
+    console.error('[Parser] EPUB 解析错误:', error);
+    const errorMessage = error instanceof Error ? error.message : '未知错误';
+    throw new Error(`无法解析EPUB文件: ${errorMessage}`);
   }
 }
 
@@ -131,9 +142,10 @@ export async function parseDocument(file: File): Promise<{
   switch (extension) {
     case 'pdf':
       return parsePDF(file);
-    case 'epub':
+    case 'epub': {
       const paragraphs = await parseEPUB(file);
       return { paragraphs };
+    }
     default:
       throw new Error(`不支持的文件格式: ${extension}`);
   }

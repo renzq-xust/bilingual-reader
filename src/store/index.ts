@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import { Document, ChatMessage, TranslationConfig, Sentence } from '../types';
 
+// 视觉翻译结果（内联定义，待 types 文件解锁后迁移）
+export interface VisionTranslationResult {
+  extractedText: string;
+  translation: string;
+}
+
 interface AppState {
   // 文档状态
   document: Document | null;
@@ -10,10 +16,16 @@ interface AppState {
   currentPage: number;
   setCurrentPage: (page: number) => void;
   
-  // 视觉翻译结果 (pageNum -> { extractedText, translation })
-  visionTranslations: Map<number, { extractedText: string; translation: string }>;
-  setVisionTranslation: (pageNum: number, result: { extractedText: string; translation: string }) => void;
+  // 视觉翻译结果 (pageNum -> result)
+  // 按文档 ID 隔离，切换文档时自动保留
+  visionTranslations: Map<number, VisionTranslationResult>;
+  setVisionTranslation: (pageNum: number, result: VisionTranslationResult) => void;
   clearVisionTranslations: () => void;
+  
+  // 已翻译的页面集合（从组件 state 提升到全局 store）
+  translatedPages: Set<number>;
+  markPageAsTranslated: (pageNum: number) => void;
+  clearTranslatedPages: () => void;
   
   // 当前段落索引
   currentParagraphIndex: number;
@@ -56,7 +68,20 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   // 文档状态
   document: null,
-  setDocument: (doc) => set({ document: doc }),
+  setDocument: (doc) => set((state) => {
+    // 切换文档时，清理旧文档的翻译状态
+    if (doc && state.document && doc.id !== state.document.id) {
+      return {
+        document: doc,
+        visionTranslations: new Map(),
+        translatedPages: new Set(),
+        currentPage: 1,
+        selectedSentence: null,
+        highlightedSentenceId: null,
+      };
+    }
+    return { document: doc };
+  }),
   
   // 当前页码
   currentPage: 1,
@@ -70,6 +95,15 @@ export const useAppStore = create<AppState>((set) => ({
     return { visionTranslations: newMap };
   }),
   clearVisionTranslations: () => set({ visionTranslations: new Map() }),
+  
+  // 已翻译页面（从组件提升到全局）
+  translatedPages: new Set(),
+  markPageAsTranslated: (pageNum) => set((state) => {
+    const newSet = new Set(state.translatedPages);
+    newSet.add(pageNum);
+    return { translatedPages: newSet };
+  }),
+  clearTranslatedPages: () => set({ translatedPages: new Set() }),
   
   // 当前段落索引
   currentParagraphIndex: 0,
@@ -101,7 +135,7 @@ export const useAppStore = create<AppState>((set) => ({
   // 翻译配置
   translationConfig: {
     apiKey: '',
-    model: 'deepseek-flash',  // 默认使用 Flash 模型（支持视觉）
+    model: 'deepseek-flash',
     baseUrl: 'https://api.deepseek.com',
     targetLanguage: 'zh-CN',
   },

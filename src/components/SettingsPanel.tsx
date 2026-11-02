@@ -1,13 +1,24 @@
-import { useState, useEffect } from 'react';
-import { Save, TestTube, Eye, EyeOff, Key, Globe, Palette } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Save, TestTube, Eye, EyeOff, Key, Globe, Palette, Shield } from 'lucide-react';
 import { useAppStore } from '../store';
 import { createDeepSeekService } from '../services/deepseek';
+import { saveConfigSecure, loadConfigSecure } from '../utils/crypto';
+import { TranslationConfig } from '../types';
+import { Toast } from './ConfirmDialog';
 
 export function SettingsPanel() {
   const { translationConfig, setTranslationConfig } = useAppStore();
   const [showApiKey, setShowApiKey] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning'; isVisible: boolean }>({
+    message: '', type: 'info', isVisible: false,
+  });
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+    setToast({ message, type, isVisible: true });
+  }, []);
 
   // 测试 API 连接
   const handleTestConnection = async () => {
@@ -24,31 +35,42 @@ export function SettingsPanel() {
       await service.translate('Hello, this is a test.');
       setTestResult('success');
     } catch (error) {
-      console.error('Test connection failed:', error);
+      console.error('[Settings] 测试连接失败:', error);
       setTestResult('error');
     } finally {
       setIsTesting(false);
     }
   };
 
-  // 保存设置
-  const handleSave = () => {
-    localStorage.setItem('translationConfig', JSON.stringify(translationConfig));
-    alert('设置已保存');
+  // 保存设置（加密存储）
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await saveConfigSecure(translationConfig as unknown as Record<string, unknown>);
+      showToast('设置已加密保存', 'success');
+    } catch (error) {
+      console.error('[Settings] 保存失败:', error);
+      showToast('保存失败，请重试', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  // 加载保存的设置
+  // 加载保存的设置（解密加载）
   useEffect(() => {
-    const saved = localStorage.getItem('translationConfig');
-    if (saved) {
+    const loadConfig = async () => {
       try {
-        const config = JSON.parse(saved);
-        console.log('从 localStorage 加载配置:', config);
-        setTranslationConfig(config);
-      } catch {
-        console.error('加载配置失败');
+        const config = await loadConfigSecure<TranslationConfig>();
+        if (config) {
+          console.log('[Settings] 从 localStorage 加载加密配置成功');
+          setTranslationConfig(config);
+        }
+      } catch (error) {
+        console.warn('[Settings] 加载配置失败:', error);
       }
-    }
+    };
+    
+    loadConfig();
   }, [setTranslationConfig]);
 
   return (
@@ -86,8 +108,9 @@ export function SettingsPanel() {
                   {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                API Key 仅存储在本地浏览器中
+              <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                <Shield className="w-3 h-3" />
+                API Key 经编码后存储在本地浏览器中
               </p>
             </div>
 
@@ -168,11 +191,25 @@ export function SettingsPanel() {
         <div className="pt-4 border-t border-gray-700">
           <button
             onClick={handleSave}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            disabled={isSaving}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
           >
             <Save className="w-4 h-4" />
-            保存设置
+            {isSaving ? '保存中...' : '保存设置'}
           </button>
+        </div>
+
+        {/* 隐私说明 */}
+        <div className="pt-6 border-t border-gray-700">
+          <h3 className="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-green-400" />
+            隐私与数据安全
+          </h3>
+          <div className="space-y-2 text-xs text-gray-400">
+            <p>• API Key 经过编码后存储在本地浏览器中，非明文保存</p>
+            <p>• 翻译时文档内容会以图片形式发送至 DeepSeek API 进行处理</p>
+            <p>• 敏感文档请谨慎使用在线翻译功能</p>
+          </div>
         </div>
 
         {/* 使用说明 */}
@@ -198,6 +235,14 @@ export function SettingsPanel() {
           </div>
         </div>
       </div>
+
+      {/* Toast 通知 */}
+      <Toast
+        message={toast.message}
+        type={toast.type}
+        isVisible={toast.isVisible}
+        onClose={() => setToast(prev => ({ ...prev, isVisible: false }))}
+      />
     </div>
   );
 }

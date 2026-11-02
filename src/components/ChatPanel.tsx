@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Trash2, Loader2, X, Bot, User } from 'lucide-react';
 import { useAppStore } from '../store';
 import { createDeepSeekService } from '../services/deepseek';
 import { ChatMessage } from '../types';
+import { CHAT_CONFIG } from '../utils/config';
+import { Toast } from './ConfirmDialog';
 
 export function ChatPanel() {
   const { 
@@ -12,34 +14,36 @@ export function ChatPanel() {
     translationConfig,
     setIsChatOpen,
     selectedSentence,
-    document,
+    document: doc,
     currentPage,
-    visionTranslations,  // 从 store 获取视觉翻译结果
+    visionTranslations,
   } = useAppStore();
   
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning'; isVisible: boolean }>({
+    message: '', type: 'info', isVisible: false,
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const streamingRef = useRef('');  // 用 ref 跟踪流式内容
+  const streamingRef = useRef('');
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+    setToast({ message, type, isVisible: true });
+  }, []);
 
   // 获取当前页的翻译内容作为上下文
   const getPageContext = () => {
-    if (!document?.pdfPages) return null;
-    const pageInfo = document.pdfPages[currentPage - 1];
+    if (!doc?.pdfPages) return null;
+    const pageInfo = doc.pdfPages[currentPage - 1];
     if (!pageInfo) return null;
     
-    // 优先使用视觉翻译结果（从 store 中获取）
     const visionTranslation = visionTranslations.get(currentPage);
     if (visionTranslation?.translation) {
-      return {
-        pageNumber: currentPage,
-        translation: visionTranslation.translation,
-      };
+      return { pageNumber: currentPage, translation: visionTranslation.translation };
     }
     
-    // 回退到句子列表
     if (pageInfo.sentences.length > 0) {
       const text = pageInfo.sentences.map(s => s.text).join(' ');
       const translation = pageInfo.sentences.map(s => s.translation).filter(Boolean).join(' ');
@@ -64,7 +68,7 @@ export function ChatPanel() {
     if (!input.trim() || isLoading) return;
 
     if (!translationConfig.apiKey) {
-      alert('请先在设置中配置 API Key');
+      showToast('请先在设置中配置 API Key', 'warning');
       return;
     }
 
@@ -80,18 +84,17 @@ export function ChatPanel() {
     setInput('');
     setIsLoading(true);
     setStreamingContent('');
-    streamingRef.current = '';  // 重置 ref
+    streamingRef.current = '';
 
-    // 构建对话历史
-    const historyMessages = [...chatMessages, userMessage].slice(-10).map(msg => ({
-      role: msg.role,
-      content: msg.content,
-    }));
+    const historyMessages = [...chatMessages, userMessage]
+      .slice(-CHAT_CONFIG.MAX_HISTORY_MESSAGES)
+      .map(msg => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      }));
 
-    // 获取当前页上下文
     const pageContext = getPageContext();
     
-    // 构建带上下文的用户消息
     let finalContent = userMessage.content;
     if (pageContext) {
       finalContent = `[当前阅读内容 - 第 ${pageContext.pageNumber} 页]\n${pageContext.translation || pageContext.text || ''}\n\n[用户问题]\n${userMessage.content}`;
@@ -106,14 +109,14 @@ export function ChatPanel() {
     await service.chat(
       historyMessages,
       (chunk) => {
-        streamingRef.current += chunk;  // 同时更新 ref
+        streamingRef.current += chunk;
         setStreamingContent(prev => prev + chunk);
       },
       () => {
         const assistantMessage: ChatMessage = {
           id: `msg-${Date.now()}-assistant`,
           role: 'assistant',
-          content: streamingRef.current,  // 使用 ref 的值
+          content: streamingRef.current,
           timestamp: Date.now(),
         };
         addChatMessage(assistantMessage);
@@ -121,14 +124,26 @@ export function ChatPanel() {
         setIsLoading(false);
       },
       (error) => {
-        console.error('Chat error:', error);
-        setIsLoading(false);
+        console.error('[ChatPanel] 对话请求错误:', error);
+        
+        if (streamingRef.current.length > 0) {
+          const partialMessage: ChatMessage = {
+            id: `msg-${Date.now()}-partial`,
+            role: 'assistant',
+            content: streamingRef.current + '\n\n[⚠️ 响应中断，请重试]',
+            timestamp: Date.now(),
+          };
+          addChatMessage(partialMessage);
+        } else {
+          showToast('对话请求失败，请检查网络和 API 配置', 'error');
+        }
+        
         setStreamingContent('');
+        setIsLoading(false);
       }
     );
   };
 
-  // 处理键盘事件
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -136,7 +151,6 @@ export function ChatPanel() {
     }
   };
 
-  // 快捷提问
   const quickQuestions = [
     '解释这句话',
     '分析语法结构',
@@ -178,7 +192,6 @@ export function ChatPanel() {
             <p className="text-sm">你好！我是 AI 助手</p>
             <p className="text-xs mt-1">有什么可以帮助你的？</p>
             
-            {/* 当前选中的句子 */}
             {selectedSentence && (
               <div className="mt-4 p-3 bg-gray-700/50 rounded-lg text-left">
                 <p className="text-xs text-gray-400 mb-1">当前选中的句子:</p>
@@ -209,7 +222,6 @@ export function ChatPanel() {
             >
               <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
               
-              {/* 显示上下文 */}
               {msg.context?.sentence && (
                 <div className="mt-2 pt-2 border-t border-gray-600 text-xs opacity-75">
                   <p>参考: {msg.context.sentence.text.slice(0, 50)}...</p>
@@ -297,6 +309,14 @@ export function ChatPanel() {
           </button>
         </div>
       </div>
+
+      {/* Toast 通知 */}
+      <Toast
+        message={toast.message}
+        type={toast.type}
+        isVisible={toast.isVisible}
+        onClose={() => setToast(prev => ({ ...prev, isVisible: false }))}
+      />
     </div>
   );
 }
