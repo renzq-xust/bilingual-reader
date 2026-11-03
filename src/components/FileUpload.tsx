@@ -20,10 +20,20 @@ export function FileUpload() {
       // 解析文档
       setProgress('正在解析文档...');
       const result = await parseDocument(file);
-      const { paragraphs, pdfPages } = result;
-      console.log('[FileUpload] 文档解析完成，段落数:', paragraphs.length, 'PDF页数:', pdfPages?.length);
+      const { paragraphs, pdfPages, toc, totalPages } = result;
+      console.log(
+        '[FileUpload] 文档解析完成，段落数:',
+        paragraphs.length,
+        'PDF页数:',
+        pdfPages?.length,
+        '目录条目:',
+        toc?.length ?? 0,
+      );
       
-      setProgress(`解析完成，共 ${pdfPages?.length || 0} 页`);
+      const resolvedTotalPages =
+        totalPages ??
+        (pdfPages ? pdfPages.length : Math.ceil(paragraphs.length / 10));
+      setProgress(`解析完成，共 ${resolvedTotalPages} 页` + (toc?.length ? `，${toc.length} 个章节` : ''));
       
       // 创建文档对象
       const doc: Document = {
@@ -33,8 +43,9 @@ export function FileUpload() {
         paragraphs,
         pdfPages,
         pdfFile: file.name.endsWith('.pdf') ? file : undefined,
-        totalPages: pdfPages ? pdfPages.length : Math.ceil(paragraphs.length / 10),
+        totalPages: resolvedTotalPages,
         currentPage: 0,
+        toc: toc ?? [],
       };
 
       console.log('[FileUpload] 文档对象创建成功:', doc.title);
@@ -169,9 +180,9 @@ export function FileUpload() {
               <p className="font-medium text-yellow-400 mb-1">使用提示</p>
               <ul className="list-disc list-inside space-y-1 text-gray-400">
                 <li>首次使用请先在设置中配置 DeepSeek API Key</li>
+                <li>打开「目录」可跳转章节，并勾选后按章节翻译</li>
                 <li>点击任意句子可以高亮显示对应的翻译</li>
                 <li>打开 AI 助手可以随时提问不懂的内容</li>
-                <li>支持同步滚动查看双语对照</li>
                 <li>按 F12 打开浏览器控制台查看调试信息</li>
               </ul>
             </div>

@@ -8,6 +8,7 @@ import { PDF_CONFIG, UI_CONFIG } from '../utils/config';
 import { ReaderToolbar } from './ReaderToolbar';
 import { PDFViewer } from './PDFViewer';
 import { TranslationPanel } from './TranslationPanel';
+import { TocPanel } from './TocPanel';
 import { ConfirmDialog, Toast } from './ConfirmDialog';
 
 export function BilingualReader() {
@@ -34,6 +35,7 @@ export function BilingualReader() {
   const [renderError, setRenderError] = useState<string | null>(null);
   const [translationProgress, setTranslationProgress] = useState('');
   const [showTranslateMenu, setShowTranslateMenu] = useState(false);
+  const [showToc, setShowToc] = useState(false);
   const [isPdfLoaded, setIsPdfLoaded] = useState(false);
   const abortTranslationRef = useRef<boolean>(false);
   
@@ -239,12 +241,15 @@ export function BilingualReader() {
     doTranslateCurrentPage();
   }, [currentPage, doc, translationConfig, translatedPages, showToast, doTranslateCurrentPage]);
 
-  // 翻译所有页面（核心逻辑）
-  const doTranslateAllPages = useCallback(async (pagesToTranslate: number[]) => {
+  // 批量翻译指定页面（核心逻辑）
+  const doTranslateAllPages = useCallback(async (
+    pagesToTranslate: number[],
+    label = '全部',
+  ) => {
     if (!doc?.pdfPages) return;
-    const totalPages = doc.pdfPages.length;
+    const batchTotal = pagesToTranslate.length;
     
-    console.log('[BilingualReader] 开始翻译所有页面...');
+    console.log(`[BilingualReader] 开始翻译${label}，共 ${batchTotal} 页...`);
     setIsTranslating(true);
     setIsTranslatingAll(true);
     abortTranslationRef.current = false;
@@ -252,13 +257,14 @@ export function BilingualReader() {
     try {
       const service = createDeepSeekService(translationConfig);
       
-      for (const pageNum of pagesToTranslate) {
+      for (let i = 0; i < pagesToTranslate.length; i++) {
+        const pageNum = pagesToTranslate[i];
         if (abortTranslationRef.current) {
           setTranslationProgress('翻译已取消');
           break;
         }
         
-        setTranslationProgress(`正在翻译... 第 ${pageNum}/${totalPages} 页`);
+        setTranslationProgress(`正在翻译「${label}」... ${i + 1}/${batchTotal}（第 ${pageNum} 页）`);
         
         try {
           await translatePage(pageNum, service);
@@ -269,8 +275,8 @@ export function BilingualReader() {
       }
       
       if (!abortTranslationRef.current) {
-        setTranslationProgress('全部翻译完成');
-        showToast('全部翻译完成', 'success');
+        setTranslationProgress(`${label}翻译完成`);
+        showToast(`${label}翻译完成`, 'success');
       }
     } catch (error) {
       console.error('[BilingualReader] 翻译失败:', error);
@@ -284,6 +290,39 @@ export function BilingualReader() {
       }, UI_CONFIG.PROGRESS_FADE_DELAY);
     }
   }, [doc, translationConfig, markPageAsTranslated, showToast]);
+
+  // 按章节翻译
+  const handleTranslateChapters = useCallback((pages: number[], label: string) => {
+    if (!doc?.pdfPages) {
+      showToast('当前仅支持 PDF 按页视觉翻译', 'warning');
+      return;
+    }
+    if (!translationConfig.apiKey) {
+      showToast('请先在设置中配置 API Key', 'warning');
+      return;
+    }
+    if (pages.length === 0) {
+      showToast('所选章节没有可定位的页码', 'warning');
+      return;
+    }
+
+    const untranslated = pages.filter((p) => !translatedPages.has(p));
+    const message =
+      untranslated.length === 0
+        ? `「${label}」共 ${pages.length} 页均已翻译，是否重新翻译？`
+        : `「${label}」共 ${pages.length} 页，其中 ${untranslated.length} 页未翻译。开始翻译？`;
+
+    setConfirmDialog({
+      isOpen: true,
+      title: '按章节翻译',
+      message,
+      onConfirm: () => {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        const toTranslate = untranslated.length > 0 ? untranslated : pages;
+        doTranslateAllPages(toTranslate, label);
+      },
+    });
+  }, [doc, translationConfig, translatedPages, showToast, doTranslateAllPages]);
 
   // 翻译所有页面（带确认检查）
   const handleTranslateAllPages = useCallback(async () => {
@@ -423,6 +462,8 @@ export function BilingualReader() {
 
   if (!doc) return null;
 
+  const hasToc = (doc.toc?.length ?? 0) > 0;
+
   return (
     <div className="flex-1 flex flex-col h-full">
       {/* 工具栏 */}
@@ -433,6 +474,8 @@ export function BilingualReader() {
         scale={scale}
         isTranslating={isTranslating}
         showTranslateMenu={showTranslateMenu}
+        showToc={showToc}
+        hasToc={hasToc}
         translationProgress={translationProgress}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
@@ -440,13 +483,38 @@ export function BilingualReader() {
         onPrevPage={() => goToPage(currentPage - 1)}
         onNextPage={() => goToPage(currentPage + 1)}
         onTranslateMenuToggle={() => setShowTranslateMenu(prev => !prev)}
-        onTranslateCurrentPage={handleTranslateCurrentPage}
-        onTranslateAllPages={handleTranslateAllPages}
+        onTranslateCurrentPage={() => {
+          setShowTranslateMenu(false);
+          handleTranslateCurrentPage();
+        }}
+        onTranslateAllPages={() => {
+          setShowTranslateMenu(false);
+          handleTranslateAllPages();
+        }}
+        onOpenTocForChapterTranslate={() => {
+          setShowTranslateMenu(false);
+          setShowToc(true);
+        }}
+        onToggleToc={() => setShowToc((prev) => !prev)}
         onCancelTranslation={handleCancelTranslation}
       />
 
       {/* 双语对照阅读区域 */}
       <div className="flex-1 flex overflow-hidden">
+        {/* 目录面板 */}
+        {showToc && (
+          <TocPanel
+            toc={doc.toc ?? []}
+            totalPages={doc.totalPages || 1}
+            currentPage={currentPage}
+            translatedPages={translatedPages}
+            isTranslating={isTranslating}
+            onClose={() => setShowToc(false)}
+            onNavigate={goToPage}
+            onTranslateChapters={handleTranslateChapters}
+          />
+        )}
+
         {/* 左侧 - PDF渲染 */}
         <PDFViewer
           canvasRef={pdfCanvasRef}

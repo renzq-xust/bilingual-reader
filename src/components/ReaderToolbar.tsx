@@ -8,7 +8,8 @@ import {
   ZoomOut,
   RotateCcw,
   Play,
-  Square
+  Square,
+  List,
 } from 'lucide-react';
 import { Document } from '../types';
 
@@ -19,6 +20,8 @@ interface ReaderToolbarProps {
   scale: number;
   isTranslating: boolean;
   showTranslateMenu: boolean;
+  showToc: boolean;
+  hasToc: boolean;
   translationProgress: string;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -28,6 +31,8 @@ interface ReaderToolbarProps {
   onTranslateMenuToggle: () => void;
   onTranslateCurrentPage: () => void;
   onTranslateAllPages: () => void;
+  onOpenTocForChapterTranslate: () => void;
+  onToggleToc: () => void;
   onCancelTranslation: () => void;
 }
 
@@ -38,6 +43,8 @@ export function ReaderToolbar({
   scale,
   isTranslating,
   showTranslateMenu,
+  showToc,
+  hasToc,
   translationProgress,
   onZoomIn,
   onZoomOut,
@@ -47,6 +54,8 @@ export function ReaderToolbar({
   onTranslateMenuToggle,
   onTranslateCurrentPage,
   onTranslateAllPages,
+  onOpenTocForChapterTranslate,
+  onToggleToc,
   onCancelTranslation,
 }: ReaderToolbarProps) {
   return (
@@ -65,6 +74,20 @@ export function ReaderToolbar({
       </div>
       
       <div className="flex items-center gap-4">
+        {/* 目录按钮 */}
+        <button
+          onClick={onToggleToc}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+            showToc
+              ? 'bg-blue-600 text-white'
+              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+          }`}
+          title={hasToc ? '目录 / 按章节翻译' : '目录（当前文档无大纲）'}
+        >
+          <List className="w-4 h-4" />
+          <span className="text-sm font-medium">目录</span>
+        </button>
+
         {/* 翻译按钮 */}
         <div className="relative" data-translate-menu>
           <button
@@ -87,13 +110,20 @@ export function ReaderToolbar({
           
           {/* 翻译菜单 */}
           {showTranslateMenu && !isTranslating && (
-            <div className="absolute top-full right-0 mt-2 w-48 bg-gray-700 rounded-lg shadow-lg border border-gray-600 py-2 z-50">
+            <div className="absolute top-full right-0 mt-2 w-52 bg-gray-700 rounded-lg shadow-lg border border-gray-600 py-2 z-50">
               <button
                 onClick={onTranslateCurrentPage}
                 className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-600 flex items-center gap-2"
               >
                 <Play className="w-4 h-4" />
                 翻译当前页
+              </button>
+              <button
+                onClick={onOpenTocForChapterTranslate}
+                className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-600 flex items-center gap-2"
+              >
+                <List className="w-4 h-4" />
+                按章节翻译…
               </button>
               <button
                 onClick={onTranslateAllPages}

@@ -22,6 +22,18 @@ export interface PDFPageInfo {
   sentences: Sentence[];
 }
 
+// 目录项（章节）
+export interface TocItem {
+  id: string;
+  title: string;
+  /** 起始页码（1-based）；无法解析时为 null */
+  startPage: number | null;
+  /** 结束页码（含），解析后由扁平化逻辑填充 */
+  endPage?: number | null;
+  level: number;
+  children: TocItem[];
+}
+
 // 文档类型定义
 export interface Document {
   id: string;
@@ -32,6 +44,8 @@ export interface Document {
   pdfFile?: File;  // PDF文件对象（用于渲染）
   totalPages?: number;
   currentPage?: number;
+  /** 文档目录结构 */
+  toc?: TocItem[];
 }
 
 // 聊天消息类型定义
